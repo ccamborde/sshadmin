@@ -3,7 +3,49 @@ import json
 import os
 import re
 import io
+import time
+import threading
 from typing import Optional
+
+
+# ── SSH Connection Pool ──────────────────────────────────────────
+# Caches SSH connections by (host, user, port, key_path) to avoid
+# re-doing the full handshake on every API call.
+# Each entry: { "client": SSHClient, "last_used": float }
+_ssh_pool: dict[tuple, dict] = {}
+_pool_lock = threading.Lock()
+_POOL_MAX_IDLE = 300  # seconds — evict connections idle for 5 min
+
+
+def _pool_key(host: str, user: str, port: int, key_path: Optional[str]) -> tuple:
+    return (host, user, port, os.path.expanduser(key_path) if key_path else "")
+
+
+def _is_client_alive(client: paramiko.SSHClient) -> bool:
+    """Check if an SSH client's transport is still active."""
+    try:
+        transport = client.get_transport()
+        return transport is not None and transport.is_active()
+    except Exception:
+        return False
+
+
+def cleanup_ssh_pool():
+    """Remove stale connections from the pool."""
+    now = time.time()
+    with _pool_lock:
+        stale_keys = [
+            k for k, v in _ssh_pool.items()
+            if now - v["last_used"] > _POOL_MAX_IDLE or not _is_client_alive(v["client"])
+        ]
+        for k in stale_keys:
+            try:
+                _ssh_pool[k]["client"].close()
+            except Exception:
+                pass
+            del _ssh_pool[k]
+        if stale_keys:
+            print(f"[ssh-pool] Cleaned up {len(stale_keys)} stale connection(s), {len(_ssh_pool)} remaining")
 
 
 def _load_pkey(key_path: str) -> paramiko.PKey:
@@ -85,14 +127,14 @@ def _find_default_keys() -> list[str]:
     return found
 
 
-def get_ssh_client(
+def _create_ssh_client(
     host: str,
     user: str,
     port: int = 22,
     key_path: Optional[str] = None,
     timeout: int = 20,
 ) -> paramiko.SSHClient:
-    """Create and return an SSH client connected to the remote server."""
+    """Create a brand-new SSH client (no pool). Used internally."""
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
@@ -106,13 +148,10 @@ def get_ssh_client(
     )
 
     if key_path:
-        # Explicitly specified key
         keys_to_try = [key_path]
     else:
-        # Look for default keys in ~/.ssh/
         keys_to_try = _find_default_keys()
 
-    # Try each key with our loader that handles all formats (PKCS#8, etc.)
     last_error = None
     for kp in keys_to_try:
         try:
@@ -124,7 +163,7 @@ def get_ssh_client(
             last_error = e
             continue
 
-    # Dernier recours : tenter agent SSH + look_for_keys natif Paramiko
+    # Last resort: try SSH agent + look_for_keys
     try:
         connect_kwargs.pop("pkey", None)
         connect_kwargs["allow_agent"] = True
@@ -132,33 +171,86 @@ def get_ssh_client(
         client.connect(**connect_kwargs)
         return client
     except Exception as e:
-        # Remonter l'erreur la plus pertinente
         raise last_error if last_error else e
 
 
+def get_ssh_client(
+    host: str,
+    user: str,
+    port: int = 22,
+    key_path: Optional[str] = None,
+    timeout: int = 20,
+) -> paramiko.SSHClient:
+    """Get an SSH client from the connection pool (or create a new one).
+
+    The returned client is SHARED — do NOT call client.close() on it.
+    It will be kept alive in the pool for reuse.
+    """
+    key = _pool_key(host, user, port, key_path)
+
+    with _pool_lock:
+        if key in _ssh_pool:
+            entry = _ssh_pool[key]
+            if _is_client_alive(entry["client"]):
+                entry["last_used"] = time.time()
+                return entry["client"]
+            else:
+                # Dead connection, remove it
+                try:
+                    entry["client"].close()
+                except Exception:
+                    pass
+                del _ssh_pool[key]
+
+    # Create new connection (outside lock to avoid blocking)
+    client = _create_ssh_client(host, user, port, key_path, timeout)
+
+    with _pool_lock:
+        # Double-check: another thread may have created one in the meantime
+        if key in _ssh_pool and _is_client_alive(_ssh_pool[key]["client"]):
+            # Use the one already in the pool, close ours
+            client.close()
+            _ssh_pool[key]["last_used"] = time.time()
+            return _ssh_pool[key]["client"]
+        _ssh_pool[key] = {"client": client, "last_used": time.time()}
+
+    print(f"[ssh-pool] New connection to {user}@{host}:{port} (pool size: {len(_ssh_pool)})")
+    return client
+
+
+def get_ssh_client_new(
+    host: str,
+    user: str,
+    port: int = 22,
+    key_path: Optional[str] = None,
+    timeout: int = 20,
+) -> paramiko.SSHClient:
+    """Create an exclusive (non-pooled) SSH client. Caller MUST close() it.
+
+    Use this for long-lived connections like log streaming.
+    """
+    return _create_ssh_client(host, user, port, key_path, timeout)
+
+
 def test_connection(host: str, user: str, port: int = 22, key_path: Optional[str] = None) -> dict:
-    """Teste la connexion SSH vers un serveur."""
+    """Test SSH connection to a server."""
     try:
         client = get_ssh_client(host, user, port, key_path)
-        # Retrieve some server info
         stdin, stdout, stderr = client.exec_command("hostname && uname -s -r")
         info = stdout.read().decode("utf-8").strip()
-        client.close()
         return {"success": True, "message": f"Connection successful — {info}"}
     except Exception as e:
         return {"success": False, "message": str(e)}
 
 
 def list_containers(host: str, user: str, port: int = 22, key_path: Optional[str] = None) -> list[dict]:
-    """Liste les containers Docker sur un serveur distant."""
+    """List Docker containers on a remote server."""
     try:
         client = get_ssh_client(host, user, port, key_path)
-        # Format JSON pour un parsing fiable
         cmd = 'docker ps -a --format \'{"id":"{{.ID}}","name":"{{.Names}}","image":"{{.Image}}","status":"{{.Status}}","state":"{{.State}}","ports":"{{.Ports}}","created":"{{.CreatedAt}}"}\''
         stdin, stdout, stderr = client.exec_command(cmd)
         output = stdout.read().decode("utf-8").strip()
         errors = stderr.read().decode("utf-8").strip()
-        client.close()
 
         if errors and not output:
             return []
@@ -175,7 +267,7 @@ def list_containers(host: str, user: str, port: int = 22, key_path: Optional[str
 
         return containers
     except Exception as e:
-        raise Exception(f"Erreur SSH: {str(e)}")
+        raise Exception(f"SSH error: {str(e)}")
 
 
 def get_container_logs(
@@ -198,14 +290,13 @@ def get_container_logs(
 
         stdin, stdout, stderr = client.exec_command(cmd)
         output = stdout.read().decode("utf-8", errors="replace").strip()
-        client.close()
 
         if not output:
             return []
 
         return parse_docker_logs(output)
     except Exception as e:
-        raise Exception(f"Erreur SSH: {str(e)}")
+        raise Exception(f"SSH error: {str(e)}")
 
 
 def stream_container_logs(
@@ -216,8 +307,10 @@ def stream_container_logs(
     key_path: Optional[str] = None,
     tail: int = 50,
 ):
-    """Generator that streams Docker container logs in real-time."""
-    client = get_ssh_client(host, user, port, key_path)
+    """Generator that streams Docker container logs in real-time.
+    Uses an exclusive (non-pooled) connection since it's long-lived.
+    """
+    client = get_ssh_client_new(host, user, port, key_path)
     cmd = f"docker logs --follow --tail {tail} --timestamps {container_id} 2>&1"
     stdin, stdout, stderr = client.exec_command(cmd, get_pty=True)
 
@@ -250,7 +343,7 @@ def docker_action(
     }
 
     if action not in allowed_actions:
-        raise Exception(f"Action inconnue: {action}")
+        raise Exception(f"Unknown action: {action}")
 
     try:
         client = get_ssh_client(host, user, port, key_path)
@@ -259,14 +352,13 @@ def docker_action(
         output = stdout.read().decode("utf-8").strip()
         errors = stderr.read().decode("utf-8").strip()
         exit_code = stdout.channel.recv_exit_status()
-        client.close()
 
         if exit_code != 0:
             raise Exception(errors or f"Command failed (code {exit_code})")
 
         return {"success": True, "message": f"Action '{action}' executed successfully", "output": output}
     except Exception as e:
-        raise Exception(f"Erreur Docker: {str(e)}")
+        raise Exception(f"Docker error: {str(e)}")
 
 
 def docker_inspect(
@@ -282,7 +374,6 @@ def docker_inspect(
         cmd = f"docker inspect {container_id}"
         stdin, stdout, stderr = client.exec_command(cmd)
         output = stdout.read().decode("utf-8").strip()
-        client.close()
 
         data = json.loads(output)
         if isinstance(data, list) and len(data) > 0:
@@ -291,7 +382,7 @@ def docker_inspect(
     except json.JSONDecodeError:
         raise Exception("Unable to parse container data")
     except Exception as e:
-        raise Exception(f"Erreur SSH: {str(e)}")
+        raise Exception(f"SSH error: {str(e)}")
 
 
 def get_all_containers_logs(
@@ -306,13 +397,12 @@ def get_all_containers_logs(
     try:
         client = get_ssh_client(host, user, port, key_path)
 
-        # 1) Lister les containers running
+        # 1) List running containers
         cmd_ps = "docker ps --format '{{.ID}} {{.Names}}'"
         stdin, stdout, stderr = client.exec_command(cmd_ps)
         ps_output = stdout.read().decode("utf-8").strip()
 
         if not ps_output:
-            client.close()
             return []
 
         containers = {}
@@ -322,7 +412,6 @@ def get_all_containers_logs(
                 containers[parts[0]] = parts[1]
 
         # 2) Build a bash script that retrieves logs from all containers
-        #    with the name prefixed on each line
         script_parts = []
         for cid, cname in containers.items():
             since_flag = f"--since '{since}'" if since else ""
@@ -334,14 +423,13 @@ def get_all_containers_logs(
         full_script = " & ".join(script_parts) + " & wait"
         stdin, stdout, stderr = client.exec_command(full_script)
         output = stdout.read().decode("utf-8", errors="replace").strip()
-        client.close()
 
         if not output:
             return []
 
         return parse_multi_container_logs(output, containers)
     except Exception as e:
-        raise Exception(f"Erreur SSH: {str(e)}")
+        raise Exception(f"SSH error: {str(e)}")
 
 
 def stream_all_containers_logs(
@@ -351,11 +439,11 @@ def stream_all_containers_logs(
     key_path: Optional[str] = None,
     tail: int = 5,
 ):
-    """Generator that streams ALL running container logs in real-time."""
-    client = get_ssh_client(host, user, port, key_path)
+    """Generator that streams ALL running container logs in real-time.
+    Uses an exclusive (non-pooled) connection since it's long-lived.
+    """
+    client = get_ssh_client_new(host, user, port, key_path)
 
-    # Bash script: runs docker logs --follow for each container in parallel
-    # Each line is prefixed with [CONTAINER_NAME]
     script = (
         "for cid in $(docker ps -q); do "
         "  cname=$(docker inspect --format '{{.Name}}' $cid | sed 's|^/||'); "
@@ -395,7 +483,6 @@ def get_server_stats(
 
         stdin, stdout, stderr = client.exec_command(cmd, timeout=10)
         output = stdout.read().decode("utf-8", errors="replace").strip()
-        client.close()
 
         return _parse_linux_stats(output)
     except Exception as e:

@@ -58,7 +58,6 @@ def find_schema_files(
 
     stdin, stdout, stderr = client.exec_command(cmd, timeout=30)
     output = stdout.read().decode("utf-8").strip()
-    client.close()
 
     if not output:
         return []
@@ -208,7 +207,7 @@ def scan_containers_for_schemas(
                 continue
 
     finally:
-        client.close()
+        pass  # Pooled connection — do not close
 
     return results
 
@@ -241,7 +240,6 @@ def get_container_file_content(
         stdin, stdout, stderr = client.exec_command(cmd, timeout=10)
         content = stdout.read().decode("utf-8")
         errors = stderr.read().decode("utf-8").strip()
-        client.close()
         if errors and not content:
             return None
         return content
@@ -267,7 +265,6 @@ def get_remote_file_content(
         with sftp.open(remote_path, "r") as f:
             content = f.read().decode("utf-8")
         sftp.close()
-        client.close()
         return content
     except Exception:
         return None
@@ -344,7 +341,6 @@ def find_database_urls(
         except Exception:
             continue
 
-    client.close()
     return results
 
 

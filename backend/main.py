@@ -22,7 +22,7 @@ from ssh_manager import (
     test_connection, list_containers, get_container_logs,
     stream_container_logs, docker_action, docker_inspect,
     get_all_containers_logs, stream_all_containers_logs,
-    parse_docker_logs, get_server_stats,
+    parse_docker_logs, get_server_stats, cleanup_ssh_pool,
 )
 from local_docker import (
     LOCALHOST_SERVER, is_docker_available,
@@ -178,6 +178,16 @@ async def _load_servers_from_env():
         print(f"[config] Servers from .env: {total} total — {added} added, {updated} updated, {unchanged} unchanged")
 
 
+async def _periodic_ssh_pool_cleanup():
+    """Periodically clean up stale SSH connections from the pool."""
+    while True:
+        await asyncio.sleep(120)  # Every 2 minutes
+        try:
+            cleanup_ssh_pool()
+        except Exception:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(app):
     global _docker_local_available
@@ -186,8 +196,14 @@ async def lifespan(app):
     await init_prisma_cache_db()
     _docker_local_available = is_docker_available()
     await _load_servers_from_env()
+
+    # Start periodic SSH pool cleanup
+    pool_cleanup_task = asyncio.create_task(_periodic_ssh_pool_cleanup())
+
     yield
-    # Cleanup: stop all Prisma tunnels/studios
+
+    # Cleanup
+    pool_cleanup_task.cancel()
     prisma_cleanup_all()
 
 
@@ -287,7 +303,7 @@ async def api_delete_server(server_id: str):
 @app.post("/api/servers/test")
 async def api_test_connection(server: ServerCreate):
     key_path = server.key_path or None
-    result = test_connection(server.host, server.user, server.port, key_path)
+    result = await asyncio.to_thread(test_connection, server.host, server.user, server.port, key_path)
     return result
 
 
@@ -301,8 +317,9 @@ async def api_server_stats(server_id: str):
             stats = local_get_stats()
         else:
             key_path = server.get("key_path") or None
-            stats = get_server_stats(
-                server["host"], server["user"], server["port"], key_path
+            stats = await asyncio.to_thread(
+                get_server_stats,
+                server["host"], server["user"], server["port"], key_path,
             )
         return {"stats": stats}
     except Exception as e:
@@ -319,7 +336,9 @@ async def api_list_containers(server_id: str):
             containers = local_list_containers()
         else:
             key_path = server.get("key_path") or None
-            containers = list_containers(server["host"], server["user"], server["port"], key_path)
+            containers = await asyncio.to_thread(
+                list_containers, server["host"], server["user"], server["port"], key_path,
+            )
 
             # Trigger a background Prisma scan (if not already in progress)
             if str(server_id) not in _schema_scan_in_progress:
@@ -370,7 +389,8 @@ async def api_docker_action(server_id: str, container_id: str, req: DockerAction
             result = local_docker_action(container_id, req.action)
         else:
             key_path = server.get("key_path") or None
-            result = docker_action(
+            result = await asyncio.to_thread(
+                docker_action,
                 server["host"], server["user"], container_id,
                 req.action, server["port"], key_path,
             )
@@ -387,7 +407,8 @@ async def api_docker_inspect(server_id: str, container_id: str):
             info = local_docker_inspect(container_id)
         else:
             key_path = server.get("key_path") or None
-            info = docker_inspect(
+            info = await asyncio.to_thread(
+                docker_inspect,
                 server["host"], server["user"], container_id,
                 server["port"], key_path,
             )
@@ -406,9 +427,10 @@ async def api_get_logs(server_id: str, container_id: str, tail: int = 200, since
             logs = local_get_container_logs(container_id, tail, since)
         else:
             key_path = server.get("key_path") or None
-            logs = get_container_logs(
+            logs = await asyncio.to_thread(
+                get_container_logs,
                 server["host"], server["user"], container_id,
-                server["port"], key_path, tail, since
+                server["port"], key_path, tail, since,
             )
         return {"logs": logs, "container_id": container_id}
     except Exception as e:
@@ -425,9 +447,10 @@ async def api_get_all_logs(server_id: str, tail: int = 30, since: Optional[str] 
             logs = local_get_all_containers_logs(tail, since)
         else:
             key_path = server.get("key_path") or None
-            logs = get_all_containers_logs(
+            logs = await asyncio.to_thread(
+                get_all_containers_logs,
                 server["host"], server["user"],
-                server["port"], key_path, tail, since
+                server["port"], key_path, tail, since,
             )
         return {"logs": logs}
     except Exception as e:
