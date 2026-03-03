@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+venv/
+.venv/
+
+# Build artifacts
+dist/
+dist-backend/
+release/
+frontend/dist/
+
+# Database & runtime data
+*.db
+*.db-journal
+backend/.prisma_workspaces/
+*.log
+
+# Environment (don't bake secrets into the image)
+.env
+.env.*
+!.env.example
+
+# IDE & OS
+.git/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Electron (not needed in Docker)
+electron/
+build/
+*.icns
+*.iconset/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo

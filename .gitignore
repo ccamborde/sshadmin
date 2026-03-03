@@ -1,0 +1,54 @@
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+pip-log.txt
+
+# Node
+node_modules/
+
+# Build artifacts
+dist/
+dist-backend/
+release/
+build/icon.icns
+build/icon.png
+build/icon.iconset/
+frontend/dist/
+backend/build/
+backend/dist/
+
+# Database
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Prisma workspaces (local tunnels & studio)
+backend/.prisma_workspaces/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+._*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

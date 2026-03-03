@@ -1,0 +1,19 @@
+services:
+  sshadmin:
+    build: .
+    container_name: sshadmin
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    volumes:
+      # Persist database and Prisma workspaces across restarts
+      - sshadmin-data:/data
+      # Mount your SSH keys (read-only) for server connections
+      - ~/.ssh:/root/.ssh:ro
+      # Mount your .env for server configuration (optional)
+      # - ./.env:/data/.env:ro
+    environment:
+      - SSHADMIN_DB_DIR=/data
+
+volumes:
+  sshadmin-data:

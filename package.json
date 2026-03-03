@@ -1,0 +1,82 @@
+{
+  "name": "sshadmin",
+  "version": "1.0.0",
+  "description": "SSH Admin - Docker Monitor: monitor Docker containers across all your servers via SSH",
+  "main": "electron/main.js",
+  "author": "SSH Admin",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron .",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "bash scripts/build-backend.sh",
+    "build:electron:mac": "electron-builder --mac",
+    "build:electron:mac-x64": "electron-builder --mac --x64",
+    "build:electron:mac-arm64": "electron-builder --mac --arm64",
+    "build:electron:mac-universal": "electron-builder --mac --universal",
+    "build": "npm run build:frontend && npm run build:backend && npm run build:electron:mac",
+    "build:universal": "npm run build:frontend && npm run build:backend && npm run build:electron:mac-universal",
+    "postinstall": "cd frontend && npm install"
+  },
+  "build": {
+    "appId": "com.sshadmin.docker-monitor",
+    "productName": "SSH Admin",
+    "copyright": "Copyright © 2026 SSH Admin",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "dist-backend/",
+        "to": "backend",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "frontend/dist/",
+        "to": "frontend_dist",
+        "filter": ["**/*"]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "dmg": {
+      "backgroundColor": "#0a0a0f",
+      "title": "${productName} ${version}",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8"
+  }
+}
