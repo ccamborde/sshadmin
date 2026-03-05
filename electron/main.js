@@ -1,7 +1,14 @@
 const { app, BrowserWindow, Menu, shell, dialog } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { spawn } = require('child_process');
 const http = require('http');
+
+// ── Persistent config directory (~/.sshadmin/) ──────────
+const USER_DATA_DIR = path.join(app.getPath('home'), '.sshadmin');
+if (!fs.existsSync(USER_DATA_DIR)) {
+  fs.mkdirSync(USER_DATA_DIR, { recursive: true });
+}
 
 // ── Configuration ────────────────────────────────────────
 const BACKEND_PORT = 8765;
@@ -25,6 +32,8 @@ function getBackendPath() {
       env: {
         // Tell the backend where the frontend dist is
         SSHADMIN_STATIC_DIR: path.join(resourcesPath, 'frontend_dist'),
+        // Persistent storage for DB + .env (survives app updates)
+        SSHADMIN_DB_DIR: USER_DATA_DIR,
         // Ensure Docker CLI and common tools are in PATH
         // (macOS Finder launches don't include /usr/local/bin)
         PATH: [

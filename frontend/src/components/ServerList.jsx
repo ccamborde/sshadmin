@@ -66,6 +66,78 @@ function ServerStats({ stats }) {
   );
 }
 
+function ServerItem({ server, isLocal, isSelected, stats, onSelect, onDelete }) {
+  return (
+    <div
+      onClick={() => onSelect(server)}
+      className={`group flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all duration-150 ${
+        isSelected
+          ? isLocal
+            ? 'bg-green-600/15 border border-green-500/30'
+            : 'bg-blue-600/15 border border-blue-500/30'
+          : 'hover:bg-dark-800 border border-transparent'
+      }`}
+    >
+      <div className={`p-1.5 rounded-md self-start mt-0.5 ${
+        isSelected
+          ? isLocal ? 'bg-green-600/20' : 'bg-blue-600/20'
+          : 'bg-dark-700'
+      }`}>
+        {isLocal ? (
+          <Home className={`w-4 h-4 ${
+            isSelected ? 'text-green-400' : 'text-gray-500'
+          }`} />
+        ) : (
+          <Server className={`w-4 h-4 ${
+            isSelected ? 'text-blue-400' : 'text-gray-500'
+          }`} />
+        )}
+      </div>
+      
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <p className={`text-sm font-medium truncate ${
+            isSelected
+              ? isLocal ? 'text-green-300' : 'text-blue-300'
+              : 'text-gray-300'
+          }`}>
+            {server.name}
+          </p>
+          {isLocal && (
+            <span className="text-[10px] font-medium bg-green-600/20 text-green-400 px-1.5 py-0.5 rounded-full">
+              LOCAL
+            </span>
+          )}
+        </div>
+        <p className="text-xs text-gray-500 truncate">
+          {isLocal ? 'Local Docker' : `${server.user}@${server.host}:${server.port}`}
+        </p>
+        {!isLocal && server.key_path && (
+          <p className="text-xs text-gray-600 truncate" title={server.key_path}>
+            🔑 {server.key_path.split('/').pop()}
+          </p>
+        )}
+
+        {/* System stats */}
+        <ServerStats stats={stats} />
+      </div>
+
+      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity self-start mt-1">
+        {!isLocal && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(server.id); }}
+            className="p-1 hover:bg-red-600/20 rounded transition-colors"
+            title="Delete"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-gray-500 hover:text-red-400" />
+          </button>
+        )}
+        <ChevronRight className="w-4 h-4 text-gray-600" />
+      </div>
+    </div>
+  );
+}
+
 export default function ServerList({ servers, selectedServer, onSelect, onDelete, onAdd }) {
   const [statsMap, setStatsMap] = useState({});
   const intervalRef = useRef(null);
@@ -124,80 +196,30 @@ export default function ServerList({ servers, selectedServer, onSelect, onDelete
           </div>
         )}
 
-        {servers.map((server) => {
-          const isLocal = server.id === 'local';
+        {/* Local servers first */}
+        {servers.filter(s => s.id === 'local').map((server) => {
           const isSelected = selectedServer?.id === server.id;
           const stats = statsMap[server.id];
-
           return (
-            <div
-              key={server.id}
-              onClick={() => onSelect(server)}
-              className={`group flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all duration-150 ${
-                isSelected
-                  ? isLocal
-                    ? 'bg-green-600/15 border border-green-500/30'
-                    : 'bg-blue-600/15 border border-blue-500/30'
-                  : 'hover:bg-dark-800 border border-transparent'
-              }`}
-            >
-              <div className={`p-1.5 rounded-md self-start mt-0.5 ${
-                isSelected
-                  ? isLocal ? 'bg-green-600/20' : 'bg-blue-600/20'
-                  : 'bg-dark-700'
-              }`}>
-                {isLocal ? (
-                  <Home className={`w-4 h-4 ${
-                    isSelected ? 'text-green-400' : 'text-gray-500'
-                  }`} />
-                ) : (
-                  <Server className={`w-4 h-4 ${
-                    isSelected ? 'text-blue-400' : 'text-gray-500'
-                  }`} />
-                )}
-              </div>
-              
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className={`text-sm font-medium truncate ${
-                    isSelected
-                      ? isLocal ? 'text-green-300' : 'text-blue-300'
-                      : 'text-gray-300'
-                  }`}>
-                    {server.name}
-                  </p>
-                  {isLocal && (
-                    <span className="text-[10px] font-medium bg-green-600/20 text-green-400 px-1.5 py-0.5 rounded-full">
-                      LOCAL
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-gray-500 truncate">
-                  {isLocal ? 'Local Docker' : `${server.user}@${server.host}:${server.port}`}
-                </p>
-                {!isLocal && server.key_path && (
-                  <p className="text-xs text-gray-600 truncate" title={server.key_path}>
-                    🔑 {server.key_path.split('/').pop()}
-                  </p>
-                )}
+            <ServerItem key={server.id} server={server} isLocal isSelected={isSelected} stats={stats} onSelect={onSelect} onDelete={onDelete} />
+          );
+        })}
 
-                {/* System stats */}
-                <ServerStats stats={stats} />
-              </div>
+        {/* Separator between local and remote */}
+        {servers.some(s => s.id === 'local') && servers.some(s => s.id !== 'local') && (
+          <div className="flex items-center gap-2 py-1.5 px-2">
+            <div className="flex-1 h-px bg-dark-600" />
+            <span className="text-[9px] uppercase tracking-widest text-gray-600 font-medium">Remote</span>
+            <div className="flex-1 h-px bg-dark-600" />
+          </div>
+        )}
 
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity self-start mt-1">
-                {!isLocal && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onDelete(server.id); }}
-                    className="p-1 hover:bg-red-600/20 rounded transition-colors"
-                    title="Delete"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 text-gray-500 hover:text-red-400" />
-                  </button>
-                )}
-                <ChevronRight className="w-4 h-4 text-gray-600" />
-              </div>
-            </div>
+        {/* Remote servers */}
+        {servers.filter(s => s.id !== 'local').map((server) => {
+          const isSelected = selectedServer?.id === server.id;
+          const stats = statsMap[server.id];
+          return (
+            <ServerItem key={server.id} server={server} isLocal={false} isSelected={isSelected} stats={stats} onSelect={onSelect} onDelete={onDelete} />
           );
         })}
       </div>
