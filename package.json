@@ -43,6 +43,7 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
+      "x64ArchFiles": "Contents/Resources/backend/**/*",
       "target": [
         {
           "target": "dmg",
