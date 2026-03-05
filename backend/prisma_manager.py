@@ -30,7 +30,53 @@ os.makedirs(PRISMA_WORK_DIR, exist_ok=True)
 # ── Registry of active tunnels / studios ─────────────────────
 _active_tunnels: dict[int, "SSHTunnel"] = {}
 _active_studios: dict[int, subprocess.Popen] = {}
-_studio_logs: dict[int, str] = {}  # project_id → chemin du fichier log
+_studio_logs: dict[int, str] = {}  # project_id → log file path
+
+# ── Find npx binary (may not be in PATH in packaged apps) ────
+_npx_bin: str | None = None
+
+def _find_npx_bin() -> str:
+    """Find the npx binary, searching common locations if not in PATH."""
+    global _npx_bin
+    if _npx_bin:
+        return _npx_bin
+
+    # 1) Check if npx is already in PATH
+    npx = shutil.which("npx")
+    if npx:
+        _npx_bin = npx
+        return npx
+
+    # 2) Search common locations
+    home = os.path.expanduser("~")
+    candidates = [
+        "/usr/local/bin/npx",
+        "/opt/homebrew/bin/npx",
+    ]
+
+    # nvm: scan versions (latest first)
+    nvm_dir = os.environ.get("NVM_DIR", os.path.join(home, ".nvm"))
+    versions_dir = os.path.join(nvm_dir, "versions", "node")
+    if os.path.isdir(versions_dir):
+        try:
+            versions = sorted(os.listdir(versions_dir), reverse=True)
+            for v in versions:
+                candidates.append(os.path.join(versions_dir, v, "bin", "npx"))
+        except OSError:
+            pass
+
+    # volta
+    candidates.append(os.path.join(home, ".volta", "bin", "npx"))
+
+    for c in candidates:
+        if os.path.isfile(c) and os.access(c, os.X_OK):
+            _npx_bin = c
+            print(f"[prisma] Found npx at {c}")
+            return c
+
+    # Fallback — let the OS try
+    _npx_bin = "npx"
+    return "npx"
 
 
 # ═════════════════════════════════════════════════════════════
@@ -656,8 +702,9 @@ def start_project(
 
     # 5) Start Prisma Studio
     schema_path = os.path.join(work_dir, "schema.prisma")
+    npx = _find_npx_bin()
     cmd = [
-        "npx", "--yes", "prisma", "studio",
+        npx, "--yes", "prisma", "studio",
         "--schema", schema_path,
         "--port", str(studio_port),
         "--browser", "none",

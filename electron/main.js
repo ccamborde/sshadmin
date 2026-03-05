@@ -17,6 +17,30 @@ const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 let mainWindow = null;
 let backendProcess = null;
 
+// ── Find nvm Node.js paths ──────────────────────────────
+function findNvmNodePaths() {
+  const home = process.env.HOME || '';
+  const nvmDir = process.env.NVM_DIR || path.join(home, '.nvm');
+  const paths = [];
+  try {
+    // Try to find nvm's current/default Node version
+    const versionsDir = path.join(nvmDir, 'versions', 'node');
+    if (fs.existsSync(versionsDir)) {
+      const versions = fs.readdirSync(versionsDir).sort().reverse();
+      for (const v of versions) {
+        const binDir = path.join(versionsDir, v, 'bin');
+        if (fs.existsSync(path.join(binDir, 'npx'))) {
+          paths.push(binDir);
+          break; // Use the latest version with npx
+        }
+      }
+    }
+  } catch (e) {
+    // Ignore — nvm not installed
+  }
+  return paths;
+}
+
 // ── Find backend binary ─────────────────────────────────
 function getBackendPath() {
   const isPackaged = app.isPackaged;
@@ -34,14 +58,18 @@ function getBackendPath() {
         SSHADMIN_STATIC_DIR: path.join(resourcesPath, 'frontend_dist'),
         // Persistent storage for DB + .env (survives app updates)
         SSHADMIN_DB_DIR: USER_DATA_DIR,
-        // Ensure Docker CLI and common tools are in PATH
-        // (macOS Finder launches don't include /usr/local/bin)
+        // Ensure Docker CLI, Node.js (nvm/volta) and common tools are in PATH
+        // (macOS Finder launches don't include /usr/local/bin or nvm paths)
         PATH: [
           process.env.PATH || '',
           '/usr/local/bin',
           '/opt/homebrew/bin',
           '/Applications/Docker.app/Contents/Resources/bin',
-        ].join(':'),
+          // nvm: find active Node version
+          ...findNvmNodePaths(),
+          // volta
+          path.join(process.env.HOME || '', '.volta', 'bin'),
+        ].filter(Boolean).join(':'),
       },
     };
   }
