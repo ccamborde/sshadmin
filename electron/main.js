@@ -25,6 +25,14 @@ function getBackendPath() {
       env: {
         // Tell the backend where the frontend dist is
         SSHADMIN_STATIC_DIR: path.join(resourcesPath, 'frontend_dist'),
+        // Ensure Docker CLI and common tools are in PATH
+        // (macOS Finder launches don't include /usr/local/bin)
+        PATH: [
+          process.env.PATH || '',
+          '/usr/local/bin',
+          '/opt/homebrew/bin',
+          '/Applications/Docker.app/Contents/Resources/bin',
+        ].join(':'),
       },
     };
   }

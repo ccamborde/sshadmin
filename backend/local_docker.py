@@ -22,8 +22,50 @@ LOCALHOST_SERVER = {
 }
 
 
+_DOCKER_SEARCH_PATHS = [
+    "/usr/local/bin",
+    "/opt/homebrew/bin",
+    "/Applications/Docker.app/Contents/Resources/bin",
+    "/usr/bin",
+]
+
+_docker_bin: str | None = None  # cached after first lookup
+
+
+def _find_docker_bin() -> str:
+    """Find the docker CLI binary, checking common paths on macOS."""
+    global _docker_bin
+    if _docker_bin:
+        return _docker_bin
+
+    # 1) Try simple "docker" (works when PATH is correct)
+    import shutil
+    found = shutil.which("docker")
+    if found:
+        _docker_bin = found
+        return _docker_bin
+
+    # 2) Search well-known directories
+    for d in _DOCKER_SEARCH_PATHS:
+        candidate = os.path.join(d, "docker")
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            _docker_bin = candidate
+            return _docker_bin
+
+    # 3) Fallback — let subprocess try it and fail loudly
+    _docker_bin = "docker"
+    return _docker_bin
+
+
 def _run_cmd(cmd: str, timeout: int = 30) -> tuple[str, str, int]:
-    """Execute a local shell command and return (stdout, stderr, exit_code)."""
+    """Execute a local shell command and return (stdout, stderr, exit_code).
+
+    Automatically replaces bare 'docker' with the full path if needed.
+    """
+    docker = _find_docker_bin()
+    if docker != "docker" and cmd.startswith("docker "):
+        cmd = docker + cmd[6:]  # replace leading "docker" with full path
+
     try:
         result = subprocess.run(
             cmd, shell=True, capture_output=True, text=True, timeout=timeout
@@ -32,14 +74,17 @@ def _run_cmd(cmd: str, timeout: int = 30) -> tuple[str, str, int]:
     except subprocess.TimeoutExpired:
         raise Exception(f"Command timed out after {timeout}s")
     except Exception as e:
-        raise Exception(f"Erreur locale: {str(e)}")
+        raise Exception(f"Local error: {str(e)}")
 
 
 def is_docker_available() -> bool:
     """Check if Docker is accessible locally."""
     try:
         stdout, stderr, code = _run_cmd("docker info --format '{{.ServerVersion}}'", timeout=5)
-        return code == 0 and len(stdout) > 0
+        available = code == 0 and len(stdout) > 0
+        if available:
+            print(f"[local-docker] Docker detected: v{stdout} ({_find_docker_bin()})")
+        return available
     except Exception:
         return False
 
